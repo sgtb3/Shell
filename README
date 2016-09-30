@@ -1,0 +1,40 @@
+==================================================
+Contents:
+
+	Makefile:
+        	- Command 'make' compiles the .c source files using the gcc compiler. 
+        	- Command 'make clean' will clean all auxiliary files.
+        	- Command 'make all' will call 'make clean' followed by 'make'.
+        	- Command 'make test' and 'make fulltest' will compile and execute with valgrind.
+        	- Command 'make binTest' will create a binary called binTest.
+        	
+	shell.c:
+		- The main program - will be compiled into an executable named shell_sh.
+		- Records history by keeping a static pointer to (char *). Each history entry is 
+		  allocated memory on heap and deallocated only upon shell termination. Indivual 
+		  calls to child processes to not remove these entries. Only upon either reaching 
+		  the maximum history size is or shell termination is the history entry deallocated.
+		  History follows a circular buffer structure and uses mod arithmetic to determine
+		  the correct index for next history entry insertion.
+		- Commands for changing directories and exiting are implemented.
+		- Future update will include commands for handling pipes and more bug testing.
+
+	shell.h:
+		- The header file containing the documentation and prototypes of the shell.c 
+		  functions.
+
+	binTest.c:
+		- Used to test if the shell can execute a binary file.
+
+==================================================
+
+How to run the shell:
+	
+	make
+	./shell_sh
+
+
+
+
+
+
