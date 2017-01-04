@@ -1,6 +1,5 @@
-
 ###Shell
-A small C program written to learn the inner workings of the shell. Tested with 
+A small C program written to learn the inner workings of the shell. Tested with
 `valgrind` for memory leaks on Ubuntu Linux 16.04.01.
 
 ###Usage
@@ -20,9 +19,8 @@ A small C program written to learn the inner workings of the shell. Tested with
 
 #####shell.c
 * The main executable.
-* Built-in functionality for displaying and saving command history, 
+* Built-in functionality for displaying and saving command history,
 changing directories, and piping commands.
 
 #####shell.h
 * Header file with documentation.
-

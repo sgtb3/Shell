@@ -15,5 +15,4 @@ valtest: all
 clean:
 	rm -f *.o a.out $(EXE)
 
-all: clean shell 
-
+all: clean shell
