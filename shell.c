@@ -2,298 +2,385 @@
 
 int main(void)
 {
-        /* History declared as static  */
-        static char *history[MAXHIST];
-        static int top_entry = 0;
-        const char *delim = " ";
-        char **arg_v = NULL;
-        char *hist_entry = NULL;
-        char *line = NULL;
-        int arg_c = 0;
-        int i = 0;
+    /* history buffer */
+    static char *history[MAXHIST] = { 0 };
+    static int top_idx = 0;
 
-        int fds[2];
+    char *hist_entry = NULL;
+    char *line = NULL;
+    int prev_cmd_idx = -1;
+    int i = 0;
+    
+    for (; ;) {
 
-        /* Initialize a NULL history vector */
-        while (i < MAXHIST)
-                history[i++] = '\0';
+        printf("\n$ ");
+        
+        /* avoid dangling pointers from previous iteration */
+        free(history[top_idx]);
+        history[top_idx] = NULL;
 
-        for (; ;) {
+        /* read the next line */
+        line = read_line(stdin);
+        if (line == NULL)
+            err_kill("error: %s\n", "main: unable to read from stdin");
 
-                /* From previous iteration and print prompt to console */
-                free_memory(line, arg_v);
-                print_prompt();
+        /* continue if new line */
+        if (!strcmp(line, "\0"))
+            goto free;
 
-                /* Read the next line */
-                line = read_line(stdin);
-                if (line == NULL)
-                        kill("error: %s\n", "main: unable to read from stdin");
-
-                /* Avoid dangling pointers from previous iteration */
-                free(history[top_entry]);
-
-                /* Handle new line before tokenizing*/
-                if (!strcmp(line, "\n")) {
-                        continue;
-                }
-
-                /* Save a copy of the line before get_argc tokenizes it */
-                hist_entry = dup_entry(line);
-                if (hist_entry == NULL) {
-                        printf("error: main() unable to allocate memory\n");
-                        continue;
-                }
-
-                /* Handle pipes */
-                if (strchr(line, '|') != NULL) {
-                        pipe_handler(fds, line);
-                        continue;
-                }
-
-                /* Get the number of arguments and allocate memory */
-                arg_c = get_argc(line, delim);
-                arg_v = (char **) calloc((size_t) arg_c + 1, sizeof(char *));
-                arg_v[arg_c] = "\0";
-                if (arg_v == NULL) {
-                        printf("error: main() unable to allocate memory\n");
-                        free(hist_entry);
-                        continue;
-                }
-
-                /* Set arg_v to point to each string arg */
-                set_argv(line, arg_v, &arg_c, delim);
-
-                /* Handle exit command */
-                if (!strcmp(arg_v[0], "exit")) {
-                        free(hist_entry);
-                        break;
-                }
-
-                /* Else place entry into hist and increm loc of oldest entry */
-                history[top_entry] = hist_entry;
-                top_entry = get_remainder(top_entry);
-
-                /* Handle commands that require a fork and exec */
-                if (!strcmp(arg_v[0], "cd")) {
-                        cd_handler(arg_v, &arg_c);
-                } else if (!strcmp(arg_v[0], "history")) {
-                        hist_handler(history, &top_entry,
-                                     hist_entry, arg_v, &arg_c);
-                } else {
-                        fork_handler(line, arg_v);
-                }
+        /* handle exit */
+        if (!strcmp(line, "exit")) {
+            free(line);
+            break;
         }
 
-        /* Free everything and exit */
-        free_memory(line, arg_v);
-        hist_clear(history);
-        exit(EXIT_SUCCESS);
+        /* save a copy of the line for history before tokenizing it */
+        hist_entry = dup_entry(line);
+        if (hist_entry == NULL)
+            goto free;
+
+        /* place entry into hist and increm loc of oldest entry */
+        history[top_idx] = hist_entry;
+        top_idx = (top_idx + 1) % MAXHIST;
+        
+        /* handle commands */
+        execute_cmds(line, history, hist_entry, &top_idx, &prev_cmd_idx);
+
+    free:
+        free(line);
+    }
+
+    /* free history and exit */
+    clear_history(history);
+    exit(EXIT_SUCCESS);
+    return 0;
+}
+
+int execute_cmds(char *line, char **history, char *hist_entry, int *top_idx, 
+                 int *prev_cmd_idx)
+{
+    char *toks[_POSIX_ARG_MAX] = { 0 };
+    char *line_copy = NULL;
+    int pipe_count = 0;
+    int arg_c = 0;
+
+    /* save a copy of input line before tokenizing it */
+    line_copy = dup_entry(line);
+    arg_c = tokenize_line(line, toks, " \t");
+    
+    /* handle history */
+    if (!strcmp(toks[0], "history")) {
+        history_handler(history, top_idx, hist_entry, line_copy, 
+                        toks, arg_c, prev_cmd_idx);
+        goto free;
+    } 
+
+    /* handle pipes */ 
+    pipe_count = get_pipe_count(line_copy);
+    if (pipe_count) {
+        pipe_handler(line_copy, toks, arg_c);
+        goto free;
+    } 
+
+    /* handle change directory */
+    if (!strcmp(toks[0], "cd")) {
+        cd_handler(toks, arg_c);
+        goto free;
+    } 
+
+    /* fork and exec all other commands */
+    if (fork_handler(line_copy, -1, -1)) {
+        free(line_copy);
+        return 1;
+    }
+
+free:
+    free(line_copy);
+    return 0;
+}
+
+void clear_history(char **history)
+{
+    int i = 0;
+    while (i < MAXHIST) {
+        if (history[i] != NULL) {
+            free(history[i]);
+            history[i] = NULL;     /* avoid dangling pointer */
+        }
+        i++;
+    }
+}
+
+void print_history(char **history, int top_idx)
+{
+    int start_idx = top_idx;       /* save the starting index */
+    int curr_idx = 0;              /* history starts at 0 */
+    
+    while (1) {
+        if (history[start_idx] != NULL) {
+            printf("%d %s\n", curr_idx, history[start_idx]);
+            curr_idx++;
+        }
+        /* find remainder */
+        if ((start_idx = (start_idx + 1) % MAXHIST) == top_idx)
+            break;
+    }
+}
+
+void history_handler(char **history, int *top_idx, char *hist_entry, 
+                     char *line, char **arg_v, int arg_c, int *prev_cmd_idx) 
+{
+    /* print all history including last 'history' command */
+    if (arg_c == 1) {
+        if (*prev_cmd_idx != -1)
+            free(hist_entry);
+        print_history(history, *top_idx);
+        return;
+    }
+
+    /* else exactly two non-null arguments required */
+    if (arg_c != 2)
+        goto usage;
+
+    /* check for clear option */
+    if (!strcmp(arg_v[1], "-c")) {
+        clear_history(history);
+        /* reset back to 0 */
+        *top_idx = 0;
+        return;
+    }
+
+    /* check if history index is all digits */
+    if (check_numerical(arg_v[1]))
+        goto usage;
+    
+    /* check if index is within valid range */
+    int index = atoi(arg_v[1]);
+
+    if (index < 0 || index >= MAXHIST || index > *top_idx)
+        goto usage;
+    
+    /* else re-execute previous command from history */
+    char *prev = dup_entry(history[index]);    
+    if (!prev) {
+        free(prev);
+        return;
+    }
+    execute_cmds(prev, history, hist_entry, top_idx, prev_cmd_idx);
+
+    /* reset index */
+    *prev_cmd_idx = -1;
+
+    free(prev);
+    return;
+
+usage:
+    printf(HIST_USAGE);
+}
+
+void cd_handler(char **arg_v, int arg_c)
+{
+    if (arg_c != 2 || arg_v[1] == NULL)
+        printf("error: cd requires two non-null arguments\n");
+    else if (chdir(arg_v[1]) != 0)
+        PRINT_ERRNO
+}
+
+int fork_handler(char *line, int readfd, int writefd)
+{
+    char *buff[_POSIX_ARG_MAX];
+    pid_t pid;
+
+    if (tokenize_line(line, buff, " \t") < 0)
+        return 1;
+
+    if ((pid = fork()) < 0)
+        goto error;
+
+    /* parent waits for child */
+    if (pid > 0) {
+        wait(0);
+        return 0;
+    }
+
+    /* else child - duplicate fds */
+    if ((readfd != -1) && (dup2(readfd, STDIN_FILENO) < 0))
+        goto error;
+    if ((writefd != -1) && (dup2(writefd, STDOUT_FILENO) < 0))
+        goto error;
+
+    execv(buff[0], buff);
+    /* execv returns only if it failed */
+    err_kill("error: %s\n", strerror(errno));
+
+error:
+    PRINT_ERRNO
+    return 1;
+}
+
+void pipe_handler(char *line, char **line_toks, int arg_c)
+{
+    char *cmds[_POSIX_CHILD_MAX];
+    int exit_status = 0;
+    int writefd = -1;
+    int readfd = -1;
+    int pipes[2];
+    int i;
+
+    if (line_toks == '\0')
+        return;
+    
+    if (*line_toks[0] == '|' || *line_toks[arg_c-1] == '|') {
+        fprintf(stderr, "error: improper pipe usage\n");
+        goto close;
+    }
+
+    for (i = 0; i < arg_c - 1; i++) {
+        if (*line_toks[i] == '|' && *line_toks[i+1] == '|') {
+            fprintf(stderr, "error: improper pipe usage\n");
+            goto close;
+        }
+        if (!line_toks[i])
+            break;
+    }
+
+    /* retokenize the line around all pipe symbols */
+    tokenize_line(line, cmds, "|");
+
+    int c = 0;
+    char *cmd = cmds[c];
+    
+    /* link each cmd */
+    while (cmd != NULL) {
+        
+        if (c == 0)
+            readfd = -1;        /* input end of pipe reads */
+        else 
+            readfd = pipes[0];  /* else cmd's stdin == stdout of prev cmd */
+
+        if (cmds[c+1] == NULL) {
+            /* output end of pipe writes */
+            writefd = -1;       
+        } else {
+            /* not last cmd; collect stdout in new pipe for next cmd to read */
+            if (pipe(pipes) < 0) {
+                PRINT_ERRNO
+                goto close;
+            }
+            writefd = pipes[1];
+        }
+
+        /* fork and exec piped commands */
+        if (fork_handler(cmd, readfd, writefd))
+            goto close;
+        
+        /*
+         * close write fd to send EOF to read end of pipe, else processes will
+         * wait assuming more input is incoming.
+         */
+        if (readfd != -1) {
+            close(readfd);
+            readfd = -1;
+        }
+        if (writefd != -1) {
+            close(writefd);
+            writefd = -1;
+        }
+        cmd = cmds[++c];
+    }
+
+close:
+    if (readfd != -1)
+        close(readfd);
+
+    if (writefd != -1)
+        close(writefd);
+
+    /* wait until children exit */
+    while (1) {
+        if (wait(&exit_status) == -1) {
+            /* break if no remaining children to wait for, else error */
+            if (errno == ECHILD)
+                break;
+            PRINT_ERRNO
+        }
+    }
+}
+
+int get_pipe_count(char *line)
+{
+    char *temp = dup_entry(line);
+    if (!temp) {
+        return 0;
+    }
+    char *tok_buff[_POSIX_CHILD_MAX];
+
+    /* returns number of commands */
+    int pipes = tokenize_line(temp, tok_buff, "|");
+    free(temp);
+
+    /* return 1 less than number of commands */
+    return pipes-1;
+}
+
+int tokenize_line(char *line, char **arg_v, char *delm)
+{
+    int i = 0;
+    arg_v[i] = strtok(line, delm);
+    while (arg_v[i]) {
+        if (++i >= _POSIX_ARG_MAX) {
+            fprintf(stderr, "error: token count > than max allowable\n");
+            return -1;
+        }
+        arg_v[i] = strtok(NULL, delm);
+    }
+    return i;
 }
 
 char* read_line(FILE *stream)
 {
-        char *line = NULL;
-        size_t length = 0;
-        int chars_read = (int) getline(&line, &length, stream);
+    char *line = NULL;
+    size_t length = 0;
 
-        if (chars_read > 0)
-                return line;
-        if (errno == EINVAL)
-                fprintf(stderr, "error: %s\n", strerror(errno));
+    int chars_read = (int) getline(&line, &length, stream);
+    if (chars_read > 0 && line[0]) {
+        line[chars_read-1] = '\0';
+        return line;
+    }
 
-        free(line);
-        return NULL;
-}
+    if (errno == EINVAL)
+        PRINT_ERRNO
 
-int get_argc(char *line, const char *delim)
-{
-        size_t length = strlen(line);
-
-        /* copy original line since tokenizing it will modify it */
-        char *copy = (char *) malloc(sizeof(char) * length + 1);
-        if (copy == NULL)
-                kill("error: %s\n", "get_argc() unable to allocate memory");
-
-        char *result = strcpy(copy, line);
-        if (strcmp(line, result) != 0) {
-                printf("error: strcpy() failed to properly copy %s\n", line);
-                return '\0';
-        }
-
-        int argc = 0;
-        char *temp = strtok(copy, delim);
-        while (temp != NULL) {
-                temp = strtok(NULL, delim);
-                argc++;
-        }
-        free(copy);
-        return argc;
-}
-
-void replace_nl(char **arg_v)
-{
-        char *cp = arg_v[0];
-        while (*cp != '\0') {
-                if (*cp == '\n') {
-                        *cp = '\0';
-                        break;
-                }
-                cp++;
-        }
-}
-
-void set_argv(char *line, char **arg_v, int *arg_c, const char *delim)
-{
-        int i = 0;
-        char *tok = strtok(line, delim);
-        if (*arg_c == 1) {
-                arg_v[i] = tok;
-                replace_nl(arg_v);
-        }
-        arg_v[i++] = tok;
-
-        while (tok != NULL) {
-                tok = strtok(NULL, delim);
-                arg_v[i++] = tok;
-        }
-        /* replace any new line chars in final argument */
-        if (*arg_c != 1)
-                replace_nl(&arg_v[*arg_c-1]);
-}
-
-void kill(char *format, const char *error_msg)
-{
-        fprintf(stderr, format, error_msg);
-        exit(EXIT_FAILURE);
-}
-
-void free_memory(char *line, char **arg_v)
-{
-        free(line);
-        free(arg_v);
+    free(line);
+    return NULL;
 }
 
 char *dup_entry(const char *entry)
 {
-        char* dup = (char *) malloc(strlen(entry)+1);
-        if (dup == NULL) {
-                fprintf(stderr, "error(): dup_entry failed\n");
-                return NULL;
-        }
-        strcpy(dup, entry);
-        return dup;
+    if (entry == NULL)
+        return NULL;
+
+    char *dup = (char *) malloc(strlen(entry)+1);
+    if (dup == NULL) {
+        fprintf(stderr, "error(): dup_entry failed\n");
+        return NULL;
+    }
+    strcpy(dup, entry);
+    return dup;
 }
 
-void print_prompt()
+int check_numerical(char *str)
 {
-        printf("$");
-        fflush(stdout);
+    int i;
+    for (i = 0; i < strlen(str); i++) {
+        if (!isdigit(str[i]))
+            return 1;
+    }
+    return 0;
 }
 
-int get_remainder(int index)
+void err_kill(char *format, const char *error_msg)
 {
-        return (index+1) % MAXHIST;
-}
-
-int is_all_digits(char *line)
-{
-        int i;
-        for (i = 0; i < strlen(line); i++) {
-                if (!isdigit(line[i]))
-                        return 0;
-        }
-        return 1;
-}
-
-void cd_handler(char **arg_v, int *arg_c)
-{
-        if (*arg_c != 2 || arg_v[1] == NULL)
-                printf("error: cd requires two non-null arguments\n");
-        else if (chdir(arg_v[1]) != 0)
-                fprintf(stderr, "error: %s\n", strerror(errno));
-        printf("$");
-}
-
-void fork_handler(char *line, char **arg_v)
-{
-        pid_t pid = fork();
-        if (pid < 0) {
-                free_memory(line, arg_v);
-                kill("error: %s\n", strerror(errno));
-        }
-        if (pid != 0) {
-                wait(0);
-        } else {
-                execv(arg_v[0], arg_v + 1);
-                free_memory(line, arg_v);
-                kill("error: %s\n", strerror(errno));
-        }
-}
-
-void hist_clear(char **hist)
-{
-        int i = 0;
-        while (i < MAXHIST) {
-                free(hist[i]);
-                hist[i] = NULL; /* Avoid dangling pointer */
-                i++;
-        }
-}
-
-void hist_print(char **hist, int first)
-{
-        int start_idx = first;/* Save the starting index */
-        int curr_idx = 1;     /* History starts at 1 */
-        while (1) {
-                if (hist[start_idx] != NULL) {
-                        printf("%d %s", curr_idx, hist[start_idx]);
-                        curr_idx++;
-                }
-                /* Find remainder */
-                if ((start_idx = get_remainder(start_idx)) == first)
-                        break;
-        }
-}
-
-void hist_handler(char **hist, int *first_entry, char *hist_entry,
-                  char **arg_v, int *arg_c) {
-
-        /* Print all history including last 'history' command */
-        if (*arg_c == 1) {
-                hist_print(hist, *first_entry);
-                return;
-        }
-
-        /* Else exactly two non-null arguments required */
-        if (*arg_c != 2 || arg_v[1] == NULL) {
-                fprintf(stderr, "error(): invalid history arguments\n");
-                return;
-        }
-
-        /* Needed for strchr() */
-        if (arg_v[1][strlen(arg_v[1])] != '\0')
-                arg_v[1][strlen(arg_v[1])] = '\0';
-
-        char *opt = strchr(arg_v[1], '-');
-        int num_val;
-
-        /* Otherwise parse the second argument */
-        if (opt == NULL && is_all_digits(arg_v[1])) {
-                    num_val = atoi(arg_v[1]);
-                    if (num_val > 0 && num_val <= MAXHIST){
-                            printf("valid history number option "
-                                           "executing : (%s)\n", arg_v[1]);
-                            fork_handler(hist[num_val], arg_v);
-                            return;
-                    }
-                
-        } else if (!strcmp(opt + 1, "c")) {
-                hist_clear(hist);
-                return;
-        } else {
-                fprintf(stderr, "error(): invalid history argument\n");
-        }
-
-        /* Everything else is errors */
-        fprintf(stderr, "error(): invalid history argument\n");
+    fprintf(stderr, format, error_msg);
+    exit(EXIT_FAILURE);
 }

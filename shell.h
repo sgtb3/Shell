@@ -1,171 +1,139 @@
+#ifndef _SHELL_H_
+#define _SHELL_H_
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
-
-#ifndef _SHELL_H_
-#define _SHELL_H_
+#include <limits.h>
 
 #define MAXHIST 100
+#define PRINT_ERRNO fprintf(stderr, "error: %s\n", strerror(errno));
+#define HIST_USAGE  "\nUsage: \
+					\n\thistory    : display up to 100 previous entries (0-99) \
+					\n\thistory -c : clear history \
+            		\n\thistory n  : execute command at index n \n"
 
 /**
- * read_line() - A wrapper for the GNU call to getline().
- * @arg: The file stream to read from.
- *
- * Calls getline to read the next line from stream. The line
- * pointer and length variable are set to NULL and 0,
- * respectively, allowing getline to allocate the buffer and
- * buffer size.
- *
- * Return: On success, a char pointer of the line read from stream
- *         is returned. The caller must ensure line is freed.
- *         If getline fails for any reason, the errno value
- *         is printed to standard error and a a pointer to NULL
- *         is returned and line is freed.
+ * execute_cmds() - Calls the appropirate command handler.
+ * @arg1 line         : Input line.
+ * @arg2 history      : History buffer.
+ * @arg3 hist_entry   : Current history entry.
+ * @arg4 top_idx      : Current topmost history index.
+ * @arg5 prev_cmd_idx : Buffer containing index of a previous command in
+ * 						history to be executed again. -1 otherwise.
+ * 
+ * Return: 0 on success, 1 otherwise.
+ */
+int execute_cmds(char *line, char **history, char *hist_entry, int *top_idx, 
+				 int *prev_cmd_idx);
+
+/**
+ * clear_history() - Clears the history vector by freeing pointer value.
+ * @arg hist : History buffer.
+ */
+void clear_history(char **history);
+
+/**
+ * print_history() - Prints the all history entries.
+ * @arg1 hist    : History buffer.
+ * @arg2 top_idx : Topmost history entry.
+ */
+void print_history(char **history, int top_idx);
+
+/**
+ * history_handler() - Displays history based on parameters provided.
+ * @arg1 history      : History buffer.
+ * @arg2 first_entry  : Index of top history entry.
+ * @arg3 hist_entry   : Current history entry.
+ * @arg4 line         : Current input line.
+ * @arg5 arg_c        : Argument count.
+ * @arg6 prev_cmd_idx : Buffer containing the prev command in history to be 
+ * 						executed, or -1.
+ */
+void history_handler(char **history, int *first_entry, char *hist_entry, 
+				     char *line, char **, int arg_c, int *prev_cmd_idx);
+
+/**
+ * cd_handler() - A wrapper for the chdir call to change the cwd.
+ * @arg1 arg_v : Argument vector with the 2nd arg being the new directory.
+ * @arg2 arg_c : Argument count.
+ */
+void cd_handler(char **arg_v, int arg_c);
+
+/**
+ * fork_handler() - Handles the forking and execution of a process, and the 
+ * duplication of file descriptors if necessary.
+ * @arg1 line    : Current input line.
+ * @arg2 readfd  : Read file descriptor, or -1.
+ * @arg3 writefd : Write file descriptor, or -1.
+ * 
+ * Return: 0 on success, 1 otherwise.
+ */
+int fork_handler(char *line, int readfd, int writefd);
+
+/**
+ * pipe_handler() - Handles the actions to create a pipe for redirecting 
+ * input/output between multiple command processes.
+ * @arg1 line  : Current input line.
+ * @arg2 arg_v : Tokenized argument vector.
+ * @arg3 arg_c : Argument count.
+ * 
+ * Tokenizes the line around any pipes, sets the file descriptors, and calls
+ * the fork handler.
+ */
+void pipe_handler(char *line, char **arg_v, int arg_c);
+
+/**
+ * get_pipe_count() - Returns the number of pipes in line.
+ * @arg1 line : Currnent input line.
+ * 
+ * Return: Number of pipes in line.
+ */
+int get_pipe_count(char *line);
+
+/**
+ * tokenize_line() - Tokenizes str and saves tokens in arg_v.
+ * @arg1 line  : Line to be tokenized.
+ * @arg2 arg_v : Buffer to hold the tokens.
+ * @arg3 delm  : Delimiters.
+ * 
+ * Return: The number of tokens on success, -1 otherwise.
+ */
+int tokenize_line(char *line, char **arg_v, char *delm);
+
+/**
+ * read_line() - A wrapper for the call to getline() to read the next line
+ * from file stream. Called must deallocate memory.
+ * @arg stream : The file stream to read from.
  */
 char *read_line(FILE *stream);
 
-
 /**
- * dup_entry() - Duplicates a string by allocating heap mem.
- * @arg entry : The string entry to be cloned.
- *
- * Caller must deallocate memory.
- *
- * Return: A heap allocated clone of entry.
+ * dup_entry() - Duplicates a string by allocating heap memory. Caller must 
+ * deallocate memory.
+ * @arg entry : String to be cloned.
+ * 
+ * Return: A heap allocated clone of entry, else NULL.
  */
 char *dup_entry(const char *entry);
 
 /**
- * is_all_digits() - Checks if a string is all numerical digits.
- * @arg line : The string to be parsed
+ * check_numerical() - Checks if a string is all numerical digits.
+ * @arg str : String to be parsed.
  *
- * Return: 1 if line contains all digits, 0 otherwise.
+ * Return: 0 if line contains all digits, 1 otherwise.
  */
-int is_all_digits(char *line);
+int check_numerical(char *str);
 
 /**
- * get_argc() - Parses the line, counting the number of arguments.
- * @arg1 line  : The line to be parsed.
- * @arg2 delim : The line delimiter.
- *
- * Uses strtok to tokenize the line and thus needs a separate copy
- * allocated before the call to strtok. Keeps a running count on the
- * number of tokens.
- *
- * Return: The int token/argument count.
- */
-int get_argc(char *line, const char *delim);
-
-/**
- * get_remainder() - Returns the remainder after performing
- *                   division modulus MAXHIST.
- * @arg index : The history index.
- *
- * Return: The reminder.
- */
-int get_remainder(int index);
-
-/**
- * print_prompt() - Prints the prompt and flushes the buffer.
- */
-void print_prompt();
-
-/**
- * cd_handler() - Changes the present directory to dir.
- * @arg1 arg_v : The argument vector, with the 2nd arg being the new directory.
- * @arg2 arg_c : The argument count.
- *
- */
-void cd_handler(char **arg_v, int *arg_c);
-
-/**
- * free_memory() - Releases the allocated memory.
- * @arg1 line  : The line read from console.
- * @arg2 arg_v : The tokenized argument vector.
- *
- */
-void free_memory(char *line, char **arg_v);
-
-/**
- * kill() - Kills the program.
+ * err_kill() - Kills the program and displays error_msg to stderr.
  * @arg error_msg : The message to be printed.
- *
- * Calls fprintf to print error_msg to standard error, followed
- * by a call to exit with an exit_code value of 1 indicating
- * abnormal termination.
- *
  */
-void kill(char *format, const char *error_msg);
-
-/**
- * set_argv() - Parses arguments from line into provided arg vector.
- * @arg1 arg_count : The arg count.
- * @arg2 line      : The line to be parsed.
- * @arg3 argv      : The array buffer to hold the (char *) pointers.
- * @arg4 delim     : The line delimiter.
- *
- * The line argument is modified by strtok and the resulting arg pointers
- * are stored in the argument vector.
- *
- */
-void set_argv(char *line, char **arg_v, int *arg_c, const char *delim);
-
-/**
- * replace_nl() - Searches for and replace new line char with NULL.
- * @arg arg_v : The string to be searched.
- *
- */
-void replace_nl(char **arg_v);
-
-/**
- * handle_fork() - Handles the forking process.
- * @arg1 arg_v : The argument vector.
- * @arg2 line  : The string containing the command and arguments to
- *               be executed.
- *
- */
-void fork_handler(char *line, char **arg_v);
-
-/**
- * clear_history() - Clears the history vector by freeing pointer value.
- * @arg1 hist  : A reference to history vector.
- * @arg2 count : The current number of items in history.
- *
- */
-void hist_clear(char **hist);
-
-/**
- * hist_print() - Prints the entire contents of the history.
- * @arg1 hist  : A reference to the history vector.
- * @arg2 first : The top most history entry.
- *
- */
-void hist_print(char **hist, int first);
-
-/**
- * print_history() - Displays history based on parameters provided.
- * @arg1 hist     : A reference to the history vector.
- * @arg2 hist_idx : A reference to the current history count.
- * @arg3 arg_v    : A reference to the argument vector.
- * @arg4 arg_c    : A reference to the argument count.
- *
- */
-void hist_handler(char **hist, int *first_entry, char *hist_entry,
-                  char **arg_v, int *arg_c);
-
-/**
- * Future implementation.
- * pipe_handler() - Handles the actions to create a pipe
- * for redirecting input/output between two processes.
- * @arg2 fds[] : An array of size 2 to hold the file descriptors.
- * @arg2 line  : The command.
- *
- * Parses the line, set the file descriptors and them forks.
- *
- */
-/* void pipe_handler(int *fds, char *line); */
+void err_kill(char *format, const char *error_msg);
 
 #endif

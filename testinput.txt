@@ -1,0 +1,13 @@
+/bin/pwd
+history 4
+history
+history -c
+history
+/bin/ls -l
+history
+history 2
+history -c
+/bin/ls -al | /bin/grep Make
+cd ..
+exit
+

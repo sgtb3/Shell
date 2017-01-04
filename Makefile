@@ -1,21 +1,19 @@
-shell_sh: shell.o shell.h
-	gcc -g -Wall shell.o -o shell_sh
+.PHONY: all clean test valtest
 
-binTest: binTest.o
-	gcc -g -Wall binTest.o -o binTest
+TESTFILE = testinput.txt
+EXE = shell_sh
 
-.PHONY: test
-test:
-	valgrind --leak-check=yes ./shell_sh
+shell: shell.o shell.h
+	gcc -g -Wall -Werror shell.o -o $(EXE)
 
-.PHONY: fulltest
-fulltest:
-	valgrind -v --leak-check=full --show-leak-kinds=all ./shell_sh
+test: all
+	./$(EXE) < testinput.txt
 
-.PHONY: clean
+valtest: all
+	valgrind --leak-check=yes ./$(EXE) < $(TESTFILE)
+
 clean:
-	rm -f *.o a.out core shell_sh binTest
+	rm -f *.o a.out $(EXE)
 
-.PHONY: all
-all: clean shell_sh binTest 
+all: clean shell 
 
