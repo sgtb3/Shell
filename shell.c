@@ -52,7 +52,6 @@ int main(void)
 
     /* free history and exit */
     clear_history(history);
-    exit(EXIT_SUCCESS);
     return 0;
 }
 
